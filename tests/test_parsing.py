@@ -90,8 +90,9 @@ def test_discount():
         parse_discount("150%", 10_000)
     with pytest.raises(DataFormatError):
         parse_discount("20 000", 10_000)  # скидка больше суммы строки
+    assert parse_discount("500 руб.", 10_000) == 500
     with pytest.raises(DataFormatError):
-        parse_discount("10 руб", 10_000)
+        parse_discount("10 USD", 10_000)
 
 
 def test_quantity_and_line():

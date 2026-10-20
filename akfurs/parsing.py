@@ -9,6 +9,41 @@ class DataFormatError(ValueError):
     pass
 
 
+class ErrorCollector:
+    """Копит ошибки разбора по всем строкам и показывает их разом, сгруппировав по видам."""
+
+    EXAMPLES_PER_KIND = 3
+
+    def __init__(self):
+        self.items = []  # (номер строки в файле, поле, текст ошибки)
+
+    def apply(self, df, label, func, *cols, row_col="source_row"):
+        """func(*значения колонок) для каждой строки; ошибка -> None и запись в список."""
+        out = []
+        for row, *values in zip(df[row_col], *(df[c] for c in cols)):
+            try:
+                out.append(func(*values))
+            except DataFormatError as e:
+                self.items.append((row, label, str(e)))
+                out.append(None)
+        return out
+
+    def raise_if_any(self, source):
+        if not self.items:
+            return
+        kinds = {}
+        for row, label, msg in self.items:
+            generic = re.sub(r"'[^']*'", "'…'", msg)  # без конкретных значений
+            kind = f"{label}: {generic}"
+            kinds.setdefault(kind, []).append(f"строка {row}: {msg}")
+        lines = []
+        for kind, examples in sorted(kinds.items(), key=lambda kv: -len(kv[1])):
+            lines.append(f"{kind} — {len(examples)} стр., например:")
+            lines += [f"    {e}" for e in examples[:self.EXAMPLES_PER_KIND]]
+        raise DataFormatError(f"{source}: не распознано значений — {len(self.items)}, "
+                              f"видов проблем — {len(kinds)}\n  " + "\n  ".join(lines))
+
+
 def clean_spaces(value):
     """Неразрывные и прочие пробелы -> обычный, без краёв и повторов."""
     return re.sub(r"\s+", " ", str(value).replace(" ", " ").replace(" ", " ")).strip()
@@ -30,11 +65,12 @@ def lookup(value, mapping, what):
 # ---------- даты ----------
 
 EXCEL_EPOCH = dt.date(1899, 12, 30)
-SLASH_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+# NN/NN/YYYY и NN-NN-YYYY: день и месяц могут стоять в любом порядке
+SLASH_RE = re.compile(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$")
 
 
 def infer_slash_order(values):
-    """Порядок в датах вида NN/NN/YYYY по самим данным: 'dmy' или 'mdy'.
+    """Порядок в датах вида NN/NN/YYYY (или через дефис) по самим данным: 'dmy' или 'mdy'.
 
     Если где-то первое число > 12 — это день; если второе > 12 — месяц идёт первым.
     Противоречие — ошибка. Если однозначных дат нет, считаем 'dmy' (российская запись).
@@ -46,7 +82,7 @@ def infer_slash_order(values):
             first_is_day |= int(m.group(1)) > 12
             second_is_day |= int(m.group(2)) > 12
     if first_is_day and second_is_day:
-        raise DataFormatError("даты через '/' противоречат друг другу: есть и ДД/ММ, и ММ/ДД")
+        raise DataFormatError("даты вида NN/NN/YYYY противоречат друг другу: есть и ДД/ММ, и ММ/ДД")
     return "mdy" if second_is_day else "dmy"
 
 
@@ -74,7 +110,8 @@ def parse_date(value, slash_order="dmy"):
 
 def parse_datetime(value):
     s = clean_spaces(value)
-    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S"):
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S",
+                "%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
         try:
             return dt.datetime.strptime(s, fmt)
         except ValueError:
@@ -96,11 +133,13 @@ MONEY_PATTERNS = [
 ]
 SCALED_RE = re.compile(r"(\d+(?:[.,]\d+)?) ?(млн|тыс)\.?")
 SCALES = {"млн": 1_000_000, "тыс": 1_000}
+# обозначение рублей после суммы: «49 000 ₽», «49 000 руб.»; другие валюты — ошибка
+RUB_SUFFIX_RE = re.compile(r"\s?(?:₽|руб\.?|р\.|rub|rur)$")
 
 
 def parse_money(value):
     """Сумма в рублях (float, до копеек). Неоднозначные записи вроде '1,600' — ошибка."""
-    s = clean_spaces(value).lower()
+    s = RUB_SUFFIX_RE.sub("", clean_spaces(value).lower()).strip()
     if m := SCALED_RE.fullmatch(s):
         return round(float(m[1].replace(",", ".")) * SCALES[m[2]], 2)
     for pattern, normalize in MONEY_PATTERNS:

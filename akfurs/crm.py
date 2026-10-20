@@ -1,13 +1,11 @@
 """Выгрузка CRM: ключи строк, удаление дублей, нормализация полей."""
-from .io_utils import find_file, read_csv_text, require_columns, warn
+from .io_utils import csv_with_columns, find_file, read_csv_text, require_columns, warn
 from .parsing import (
-    DataFormatError, clean_spaces, infer_slash_order, lookup, norm_key, parse_article,
+    DataFormatError, ErrorCollector, clean_spaces, infer_slash_order, lookup, norm_key, parse_article,
     parse_client_id, parse_date, parse_datetime, parse_discount, parse_line_number, parse_money,
     parse_order_number, parse_quantity,
 )
 from .dictionaries import CURRENCIES, SOURCES, STATUS_IN_PROGRESS, STATUSES
-
-CRM_PATTERN = "*crm*.csv"
 
 COL_ORDER = "Номер заказа"
 COL_LINE = "№ строки"
@@ -47,39 +45,15 @@ STATUS = "status"
 COMMENT = "comment"
 MIN_PRICE = "min_price"      # минимально допустимая цена на дату создания
 
-MAX_REPORTED_ERRORS = 30
-
-
-class _Errors:
-    """Копит ошибки разбора по всем строкам, чтобы показать их разом."""
-
-    def __init__(self):
-        self.items = []
-
-    def apply(self, df, label, func, *cols):
-        out = []
-        for row, *values in zip(df[SOURCE_ROW], *(df[c] for c in cols)):
-            try:
-                out.append(func(*values))
-            except DataFormatError as e:
-                self.items.append(f"строка {row}, {label}: {e}")
-                out.append(None)
-        return out
-
-    def raise_if_any(self, source):
-        if self.items:
-            shown = "\n  ".join(self.items[:MAX_REPORTED_ERRORS])
-            more = len(self.items) - MAX_REPORTED_ERRORS
-            tail = f"\n  ... и ещё {more}" if more > 0 else ""
-            raise DataFormatError(f"{source}: {len(self.items)} ошибок формата:\n  {shown}{tail}")
-
 
 def load_raw(data_dir):
     """Сырые строки CRM + разобранные номер заказа, № строки и время выгрузки."""
-    df = read_csv_text(find_file(data_dir, CRM_PATTERN), header_marker=COL_ORDER)
+    path = find_file(data_dir, (".csv", ".txt"), csv_with_columns(COL_ORDER, COL_LINE, COL_EXPORTED),
+                     "Выгрузка CRM")
+    df = read_csv_text(path, header_marker=COL_ORDER)
     require_columns(df, REQUIRED, "CRM")
 
-    errors = _Errors()
+    errors = ErrorCollector()
     df[ORDER] = errors.apply(df, COL_ORDER, parse_order_number, COL_ORDER)
     df[LINE] = errors.apply(df, COL_LINE, parse_line_number, COL_LINE)
     df[EXPORTED] = errors.apply(df, COL_EXPORTED, parse_datetime, COL_EXPORTED)
@@ -113,17 +87,16 @@ def normalize(df, catalog):
     Незнакомый формат — DataFormatError; исключения — статус и источник (только предупреждение).
     """
     df = df.copy()
-    errors = _Errors()
+    errors = ErrorCollector()
     slash_order = infer_slash_order(df[COL_CREATED])
 
     df[CREATED] = errors.apply(df, COL_CREATED, lambda v: parse_date(v, slash_order), COL_CREATED)
     df[CLIENT] = errors.apply(df, COL_CLIENT, parse_client_id, COL_CLIENT)
     df[MANAGER] = errors.apply(df, COL_MANAGER, catalog.canonical_manager, COL_MANAGER)
     # по ТЗ всё, что не Оплачен/Отменён/Возврат, — «В работе»; источник в ответах не участвует
-    df[STATUS] = _map_with_warning(df[COL_STATUS], STATUSES, lambda v: STATUS_IN_PROGRESS,
-                                   COL_STATUS, f"считается «{STATUS_IN_PROGRESS}»")
-    df[SOURCE] = _map_with_warning(df[COL_SOURCE], SOURCES, clean_spaces,
-                                   COL_SOURCE, "оставлен как есть")
+    df[STATUS] = _map_with_warning(df[COL_STATUS], STATUSES, _guess_status, COL_STATUS)
+    df[SOURCE] = _map_with_warning(df[COL_SOURCE], SOURCES,
+                                   lambda v: (clean_spaces(v), "оставлен как есть"), COL_SOURCE)
     df[CURRENCY] = errors.apply(df, COL_CURRENCY, lambda v: lookup(v, CURRENCIES, "валюты"),
                                 COL_CURRENCY)
     df[QTY] = errors.apply(df, COL_QTY, parse_quantity, COL_QTY)
@@ -150,14 +123,31 @@ def normalize(df, catalog):
     return df
 
 
-def _map_with_warning(values, mapping, default, label, action):
-    """Значение по словарю; незнакомое -> default(value) и одно предупреждение на написание."""
+def _guess_status(value):
+    """Незнакомый статус: по первому слову («Отменён клиентом» -> Отменён), иначе «В работе».
+
+    «Оплачен частично» и «не оплачен» — не «Оплачен», а «В работе».
+    """
+    words = norm_key(value).split()
+    first = STATUSES.get(words[0]) if words else None
+    partial = "не" in words or any(w.startswith("частич") for w in words)
+    if first and first != STATUS_IN_PROGRESS and not partial:
+        return first, f"считается «{first}» по первому слову"
+    return STATUS_IN_PROGRESS, f"считается «{STATUS_IN_PROGRESS}»"
+
+
+def _map_with_warning(values, mapping, guess, label):
+    """Значение по словарю; незнакомое -> guess(value) = (значение, пояснение).
+
+    Предупреждение — одно на каждое незнакомое написание.
+    """
     keys = values.map(norm_key)
-    unknown = values[~keys.isin(mapping.keys())]
-    for raw, count in unknown.value_counts().items():
+    guessed = {}
+    for raw, count in values[~keys.isin(mapping.keys())].value_counts().items():
+        guessed[raw], action = guess(raw)
         warn(f"CRM: незнакомое значение '{label}' = '{raw}' ({count} стр.) — {action}; "
              f"при необходимости добавьте '{norm_key(raw)}' в akfurs/dictionaries.py")
-    return [mapping[k] if k in mapping else default(v) for k, v in zip(keys, values)]
+    return [mapping[k] if k in mapping else guessed[v] for k, v in zip(keys, values)]
 
 
 def _check_order_consistency(df):

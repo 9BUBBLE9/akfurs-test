@@ -1,24 +1,68 @@
-"""Чтение сырых файлов: поиск по маске, кодировка, разделитель."""
+"""Чтение сырых файлов: поиск по содержимому, кодировка, разделитель."""
 import csv
 import io
 import sys
+import zipfile
 from pathlib import Path
 
+import openpyxl
 import pandas as pd
 
+from .parsing import DataFormatError
+
 ENCODINGS = ("utf-8-sig", "cp1251")
+HEADER_SEARCH_LINES = 20
 
 
 def warn(msg):
     print(f"[warn] {msg}", file=sys.stderr)
 
 
-def find_file(data_dir, pattern):
-    """Ровно один файл в папке по маске, иначе ошибка."""
-    found = sorted(Path(data_dir).glob(pattern))
+def find_file(data_dir, suffixes, matches, what):
+    """Ровно один файл с нужным расширением, подходящий по содержимому, иначе ошибка.
+
+    Имя файла не важно: новая выгрузка может называться как угодно.
+    """
+    candidates = sorted(p for p in Path(data_dir).iterdir()
+                        if p.is_file() and p.suffix.lower() in suffixes)
+    found = [p for p in candidates if matches(p)]
     if len(found) != 1:
-        raise FileNotFoundError(f"ожидался один файл '{pattern}' в {data_dir}, найдено: {found}")
+        names = [p.name for p in found] or [p.name for p in candidates]
+        raise FileNotFoundError(f"{what}: в {data_dir} ожидался ровно один подходящий файл "
+                                f"({'/'.join(suffixes)}), найдено {len(found)}: {names}")
     return found[0]
+
+
+def csv_with_columns(*columns):
+    """Проверка для find_file: в первых строках CSV есть заголовок со всеми колонками."""
+    def matches(path):
+        try:
+            head = decode(path.read_bytes()).splitlines()[:HEADER_SEARCH_LINES]
+        except ValueError:
+            return False
+        return any(all(c in line for c in columns) for line in head)
+    return matches
+
+
+def excel_with_sheet(sheet):
+    def matches(path):
+        try:
+            wb = openpyxl.load_workbook(path, read_only=True)
+        except Exception:  # повреждённый или не-Excel файл просто не подходит
+            return False
+        try:
+            return sheet in wb.sheetnames
+        finally:
+            wb.close()
+    return matches
+
+
+def zip_with_txt(path):
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return any(n.lower().endswith(".txt") for n in zf.namelist())
+    except zipfile.BadZipFile:
+        return False
 
 
 def decode(raw):
@@ -27,7 +71,7 @@ def decode(raw):
             return raw.decode(enc)
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"не удалось определить кодировку, пробовали {ENCODINGS}")
+    raise DataFormatError(f"не удалось определить кодировку, пробовали {ENCODINGS}")
 
 
 def read_csv_text(path, header_marker):
@@ -40,7 +84,7 @@ def read_csv_text(path, header_marker):
     lines = text.splitlines()
     header_idx = next((i for i, l in enumerate(lines) if header_marker in l), None)
     if header_idx is None:
-        raise ValueError(f"в {path} нет строки заголовка с '{header_marker}'")
+        raise DataFormatError(f"в {path} нет строки заголовка с '{header_marker}'")
     body = "\n".join(lines[header_idx:])
     delimiter = csv.Sniffer().sniff(lines[header_idx], delimiters=";,\t|").delimiter
     df = pd.read_csv(io.StringIO(body), sep=delimiter, dtype=str, keep_default_na=False,
@@ -55,7 +99,7 @@ def read_csv_text(path, header_marker):
 def require_columns(df, columns, source):
     missing = [c for c in columns if c not in df.columns]
     if missing:
-        raise ValueError(f"{source}: нет колонок {missing}, есть {list(df.columns)}")
+        raise DataFormatError(f"{source}: нет колонок {missing}, есть {list(df.columns)}")
 
 
 def read_excel_table(path, sheet, header_marker):
@@ -67,7 +111,7 @@ def read_excel_table(path, sheet, header_marker):
     header_rows = [i for i, row in raw.iterrows()
                    if any(str(v).strip() == header_marker for v in row)]
     if not header_rows:
-        raise ValueError(f"{path} [{sheet}]: нет строки заголовка с '{header_marker}'")
+        raise DataFormatError(f"{path} [{sheet}]: нет строки заголовка с '{header_marker}'")
     h = header_rows[0]
     df = raw.iloc[h + 1:].copy()
     df.columns = [str(c).strip() for c in raw.iloc[h]]

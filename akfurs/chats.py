@@ -5,16 +5,18 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from .io_utils import decode, find_file, warn
-from .parsing import DataFormatError
-
-CHATS_PATTERN = "*.zip"
+from .io_utils import decode, find_file, warn, zip_with_txt
+from .parsing import DataFormatError, parse_datetime
 
 MANAGER = "Менеджер"
 CLIENT = "Клиент"
 
 HEADER_RE = re.compile(r"^\s*Чат\s+(\S+)")
-MESSAGE_RE = re.compile(r"^\s*\[(\d{1,2}\.\d{1,2}\.\d{4}\s+\d{1,2}:\d{2})\]\s*([^:]+?)\s*:\s*(.*)$")
+# [01.02.2030 12:00] Менеджер: текст — формат даты внутри скобок любой, понятный parse_datetime
+MESSAGE_RE = re.compile(r"^\s*\[([^\]]+)\]\s*([^:]+?)\s*:\s*(.*)$")
+# строка без [времени], но похожая на начало сообщения — не продолжение предыдущего
+LOOKS_LIKE_MESSAGE_RE = re.compile(r"^\s*(?:\[|\d{1,4}[./-]\d{1,2}[./-]\d{1,4}|(?:менеджер|клиент)\s*:)",
+                                   re.IGNORECASE)
 
 
 @dataclass
@@ -51,10 +53,13 @@ def parse_chat(name, text):
     for i, line in enumerate(lines[1:] if header else lines, start=2 if header else 1):
         m = MESSAGE_RE.match(line)
         if m:
-            time = dt.datetime.strptime(re.sub(r"\s+", " ", m[1]), "%d.%m.%Y %H:%M")
+            try:
+                time = parse_datetime(m[1])
+            except DataFormatError as e:
+                raise DataFormatError(f"{name}:{i}: {e}") from None
             chat.messages.append(Message(time, _speaker(m[2], f"{name}:{i}"), m[3].strip()))
-        elif chat.messages:  # продолжение многострочного сообщения
-            chat.messages[-1].text += "\n" + line.strip()
+        elif chat.messages and not LOOKS_LIKE_MESSAGE_RE.match(line):
+            chat.messages[-1].text += "\n" + line.strip()  # продолжение многострочного сообщения
         else:
             raise DataFormatError(f"{name}:{i}: строка не похожа на сообщение: '{line}'")
 
@@ -66,7 +71,7 @@ def parse_chat(name, text):
 
 
 def load(data_dir):
-    path = find_file(data_dir, CHATS_PATTERN)
+    path = find_file(data_dir, (".zip",), zip_with_txt, "Архив переписок")
     chats = []
     with zipfile.ZipFile(path) as zf:
         for info in sorted(zf.infolist(), key=lambda i: i.filename):

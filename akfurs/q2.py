@@ -16,6 +16,12 @@ def match_payments(payments, existing_orders):
         hits = [n for n in candidates if n in existing_orders]
         if len(hits) > 1:
             warn(f"Выписка, строка {row}: несколько заказов {hits} в '{purpose}' — неопознанный")
+        elif not hits:
+            maybe = [n for n in bank.bare_numbers(purpose) if n in existing_orders]
+            if maybe:
+                warn(f"Выписка, строка {row}: в '{purpose}' есть число {maybe}, совпадающее с "
+                     f"номером заказа, но без слова «заказ»/«счёт» — платёж считается "
+                     f"неопознанным, проверьте вручную")
         matched.append(hits[0] if len(hits) == 1 else None)
     return matched
 

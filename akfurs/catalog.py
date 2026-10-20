@@ -1,13 +1,12 @@
 """Справочник из Excel: каталог, переименования артикулов, история цен, менеджеры."""
 import datetime as dt
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 
 import pandas as pd
 
-from .io_utils import find_file, read_excel_table, require_columns
+from .io_utils import excel_with_sheet, find_file, read_excel_table, require_columns, warn
 from .parsing import DataFormatError, norm_key, parse_article, parse_date, parse_money
-
-CATALOG_PATTERN = "*.xlsx"
 
 SHEET_CATALOG = "Каталог"
 SHEET_RENAMES = "Переименования"
@@ -48,15 +47,27 @@ class Catalog:
     renames: dict          # старый артикул -> актуальный (цепочки уже развёрнуты)
     prices: pd.DataFrame   # article, date_from, date_to (None = бессрочно), rec_price, min_price
     managers: dict         # norm_key(написание) -> каноническое имя
+    _guessed: dict = field(default_factory=dict, repr=False)  # написания, узнанные по частям имени
 
     def current_article(self, article):
         return self.renames.get(article, article)
 
     def canonical_manager(self, name):
+        """Каноническое имя: сначала точное написание из справочника, затем — по частям имени
+        (фамилия + имя или инициал в любом порядке). Неоднозначно или не найдено — ошибка."""
         key = norm_key(name)
-        if key not in self.managers:
-            raise DataFormatError(f"менеджер '{name}' не найден в справочнике '{SHEET_MANAGERS}'")
-        return self.managers[key]
+        if key in self.managers:
+            return self.managers[key]
+        if key not in self._guessed:
+            hits = {canon for canon in set(self.managers.values()) if _same_person(key, canon)}
+            if len(hits) != 1:
+                reason = "подходит несколько" if hits else "не найден"
+                raise DataFormatError(f"менеджер '{name}' {reason} в справочнике '{SHEET_MANAGERS}'"
+                                      + (f": {sorted(hits)}" if hits else ""))
+            self._guessed[key] = hits.pop()
+            warn(f"менеджер '{name}' нет в справочнике дословно — сопоставлен с "
+                 f"«{self._guessed[key]}» по имени и фамилии")
+        return self._guessed[key]
 
     def min_price(self, article, on_date):
         """Минимальная цена актуального артикула на дату; ровно один период, иначе ошибка."""
@@ -67,6 +78,21 @@ class Catalog:
             raise DataFormatError(f"для артикула {article} на {on_date} найдено "
                                   f"{len(hit)} периодов цены в '{SHEET_PRICES}'")
         return float(hit[0].min_price)
+
+
+def _name_tokens(text):
+    return re.findall(r"[a-zа-я]+", norm_key(text))
+
+
+def _same_person(key, canonical):
+    """'белкина дарья' / 'д.белкина' / 'белкина д' — тот же человек, что «Дарья Белкина»."""
+    tokens = _name_tokens(key)
+    parts = _name_tokens(canonical)
+    if len(tokens) != 2 or len(parts) != 2:
+        return False
+    first, last = parts
+    return any(sorted(tokens) == sorted(variant)
+               for variant in ([first, last], [first[0], last]))
 
 
 def _resolve_renames(pairs):
@@ -98,7 +124,8 @@ def _check_price_periods(prices):
 
 
 def load(data_dir):
-    path = find_file(data_dir, CATALOG_PATTERN)
+    path = find_file(data_dir, (".xlsx", ".xlsm"), excel_with_sheet(SHEET_PRICES),
+                     "Справочник цен (Excel)")
 
     cat = read_excel_table(path, SHEET_CATALOG, COL_ARTICLE)
     require_columns(cat, [COL_ARTICLE], SHEET_CATALOG)
