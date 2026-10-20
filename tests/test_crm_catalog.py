@@ -75,9 +75,21 @@ def test_normalize(data_dir):
     assert cancelled[crm.CLIENT] == 90002
 
 
+def test_unknown_status_and_source_only_warn(tmp_path, capsys):
+    write_catalog(tmp_path / "c.xlsx")
+    write_crm(tmp_path / "01_crm.csv", [
+        "A-9;1;2026-01-10;CL-1;Дарья;ВКонтакте;KEEP-01;1;50000;руб;;Частично оплачен;;2030-01-01 09:00",
+        "A-9;2;2026-01-10;CL-1;Дарья;ВКонтакте;KEEP-01;1;50000;руб;;Частично оплачен;;2030-01-01 09:00",
+    ])
+    df = crm.load_clean(tmp_path, catalog.load(tmp_path))
+    assert list(df[crm.STATUS]) == ["В работе", "В работе"]
+    assert list(df[crm.SOURCE]) == ["ВКонтакте", "ВКонтакте"]
+    err = capsys.readouterr().err
+    assert err.count("Частично оплачен") == 1  # одно предупреждение на написание
+    assert "(2 стр.)" in err and "ВКонтакте" in err
+
+
 @pytest.mark.parametrize("bad_row, message", [
-    ("A-9;1;2026-01-10;CL-1;Дарья;IG;KEEP-01;1;50000;руб;;Частично оплачен;;2030-01-01 09:00",
-     "статуса"),
     ("A-9;1;2026-01-10;CL-1;Иван;IG;KEEP-01;1;50000;руб;;PAID;;2030-01-01 09:00", "менеджер"),
     ("A-9;1;2026-01-10;CL-1;Дарья;IG;NOPE-01;1;50000;руб;;PAID;;2030-01-01 09:00", "каталоге"),
     ("A-9;1;2026-01-10;CL-1;Дарья;IG;KEEP-01;1;50000;USD;;PAID;;2030-01-01 09:00", "валюты"),

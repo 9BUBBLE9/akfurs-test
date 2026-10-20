@@ -130,11 +130,6 @@ def test_status(raw, expected):
     assert lookup(raw, STATUSES, "статуса") == expected
 
 
-def test_unknown_status_fails():
-    with pytest.raises(DataFormatError, match="dictionaries.py"):
-        lookup("частично оплачен", STATUSES, "статуса")
-
-
 def test_currency():
     assert {lookup(v, CURRENCIES, "валюты") for v in ["RUB", "руб.", "руб", "₽", "RUR"]} == {"RUB"}
     with pytest.raises(DataFormatError):

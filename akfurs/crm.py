@@ -1,11 +1,11 @@
 """Выгрузка CRM: ключи строк, удаление дублей, нормализация полей."""
 from .io_utils import find_file, read_csv_text, require_columns, warn
 from .parsing import (
-    DataFormatError, clean_spaces, infer_slash_order, lookup, parse_article, parse_client_id,
-    parse_date, parse_datetime, parse_discount, parse_line_number, parse_money,
+    DataFormatError, clean_spaces, infer_slash_order, lookup, norm_key, parse_article,
+    parse_client_id, parse_date, parse_datetime, parse_discount, parse_line_number, parse_money,
     parse_order_number, parse_quantity,
 )
-from .dictionaries import CURRENCIES, SOURCES, STATUSES
+from .dictionaries import CURRENCIES, SOURCES, STATUS_IN_PROGRESS, STATUSES
 
 CRM_PATTERN = "*crm*.csv"
 
@@ -109,7 +109,10 @@ def deduplicate(raw):
 
 
 def normalize(df, catalog):
-    """Разбирает все поля строк заказа; любой незнакомый формат — DataFormatError."""
+    """Разбирает все поля строк заказа.
+
+    Незнакомый формат — DataFormatError; исключения — статус и источник (только предупреждение).
+    """
     df = df.copy()
     errors = _Errors()
     slash_order = infer_slash_order(df[COL_CREATED])
@@ -117,8 +120,11 @@ def normalize(df, catalog):
     df[CREATED] = errors.apply(df, COL_CREATED, lambda v: parse_date(v, slash_order), COL_CREATED)
     df[CLIENT] = errors.apply(df, COL_CLIENT, parse_client_id, COL_CLIENT)
     df[MANAGER] = errors.apply(df, COL_MANAGER, catalog.canonical_manager, COL_MANAGER)
-    df[SOURCE] = errors.apply(df, COL_SOURCE, lambda v: lookup(v, SOURCES, "источника"), COL_SOURCE)
-    df[STATUS] = errors.apply(df, COL_STATUS, lambda v: lookup(v, STATUSES, "статуса"), COL_STATUS)
+    # по ТЗ всё, что не Оплачен/Отменён/Возврат, — «В работе»; источник в ответах не участвует
+    df[STATUS] = _map_with_warning(df[COL_STATUS], STATUSES, lambda v: STATUS_IN_PROGRESS,
+                                   COL_STATUS, f"считается «{STATUS_IN_PROGRESS}»")
+    df[SOURCE] = _map_with_warning(df[COL_SOURCE], SOURCES, clean_spaces,
+                                   COL_SOURCE, "оставлен как есть")
     df[CURRENCY] = errors.apply(df, COL_CURRENCY, lambda v: lookup(v, CURRENCIES, "валюты"),
                                 COL_CURRENCY)
     df[QTY] = errors.apply(df, COL_QTY, parse_quantity, COL_QTY)
@@ -143,6 +149,16 @@ def normalize(df, catalog):
 
     _check_order_consistency(df)
     return df
+
+
+def _map_with_warning(values, mapping, default, label, action):
+    """Значение по словарю; незнакомое -> default(value) и одно предупреждение на написание."""
+    keys = values.map(norm_key)
+    unknown = values[~keys.isin(mapping.keys())]
+    for raw, count in unknown.value_counts().items():
+        warn(f"CRM: незнакомое значение '{label}' = '{raw}' ({count} стр.) — {action}; "
+             f"при необходимости добавьте '{norm_key(raw)}' в akfurs/dictionaries.py")
+    return [mapping[k] if k in mapping else default(v) for k, v in zip(keys, values)]
 
 
 def _check_order_consistency(df):
