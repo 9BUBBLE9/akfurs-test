@@ -10,12 +10,12 @@ def violations(orders):
     return active[active[crm.UNIT_NET] < active[crm.MIN_PRICE]]
 
 
-def solve(orders, managers):
-    """managers — все канонические имена: менеджеры без нарушений выводятся с нулём."""
+def solve(orders):
+    """Разбивка только по менеджерам, у которых есть нарушения."""
     bad = violations(orders)
     counts = bad[crm.MANAGER].value_counts()
-    by_manager = {name: int(counts.get(name, 0)) for name in managers}
-    by_manager = dict(sorted(by_manager.items(), key=lambda kv: (-kv[1], kv[0])))
+    by_manager = dict(sorted(((name, int(n)) for name, n in counts.items()),
+                             key=lambda kv: (-kv[1], kv[0])))
     return {
         "q3_price_violation_lines_total": int(len(bad)),
         "q3_price_violation_lines_by_manager": by_manager,

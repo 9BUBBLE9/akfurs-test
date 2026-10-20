@@ -25,15 +25,14 @@ def test_q3(tmp_path):
     orders = crm.load_clean(tmp_path, ref)
 
     assert sorted(q3.violations(orders)[crm.ORDER]) == [1, 4, 6]
-    assert q3.solve(orders, ref.manager_names) == {
+    assert q3.solve(orders) == {
         "q3_price_violation_lines_total": 3,
         "q3_price_violation_lines_by_manager": {"Дарья Белкина": 2, "Ирина Зайцева": 1},
     }
 
 
-def test_q3_lists_managers_without_violations(tmp_path):
+def test_q3_no_violations(tmp_path):
     write_catalog(tmp_path / "c.xlsx")
     write_crm(tmp_path / "01_crm.csv", ROWS[1:3])
-    ref = catalog.load(tmp_path)
-    result = q3.solve(crm.load_clean(tmp_path, ref), ref.manager_names)
-    assert result["q3_price_violation_lines_by_manager"] == {"Ирина Зайцева": 0, "Дарья Белкина": 0}
+    result = q3.solve(crm.load_clean(tmp_path, catalog.load(tmp_path)))
+    assert result == {"q3_price_violation_lines_total": 0, "q3_price_violation_lines_by_manager": {}}
