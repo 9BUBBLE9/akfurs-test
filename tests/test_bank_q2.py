@@ -74,6 +74,23 @@ def test_q2(data_dir):
     assert result["q2b_unidentified_payments_sum_rub"] == 75_123.5
 
 
+def test_paid_amount_check(data_dir, capsys):
+    # заказ 7 после скидок: 150 000 − 10% + (2 × 30 000 − 5 000) = 190 000
+    write_bank(data_dir / "02_bank_statement_rub.csv", [
+        "02.01.2030;10:00;57 100,00;RUR;Поступление;А;Аванс заказ 7",
+        "03.01.2030;10:00;132 900,00;RUR;Поступление;А;A7 доплата",
+    ])
+    orders = crm.load_clean(data_dir, catalog.load(data_dir))
+    q2.solve(orders, bank.load(data_dir))
+    assert "Заказ 7" not in capsys.readouterr().err
+
+    write_bank(data_dir / "02_bank_statement_rub.csv", [
+        "02.01.2030;10:00;57 100,00;RUR;Поступление;А;Аванс заказ 7",
+    ])
+    q2.solve(orders, bank.load(data_dir))
+    assert "разница -132,900.00" in capsys.readouterr().err
+
+
 def test_ambiguous_payment_is_unidentified(data_dir, capsys):
     write_bank(data_dir / "02_bank_statement_rub.csv", [
         "02.01.2030;10:00;100 000,00;RUR;Поступление;А;Оплата заказов A-00007 и A-00008",
