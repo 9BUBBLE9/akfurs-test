@@ -1,0 +1,12 @@
+{
+ "q1_unique_orders": 1000,
+ "q1_unique_order_lines": 1368,
+ "q2a_paid_orders_without_payment": null,
+ "q2b_unidentified_payments_count": null,
+ "q2b_unidentified_payments_sum_rub": null,
+ "q3_price_violation_lines_total": null,
+ "q3_price_violation_lines_by_manager": null,
+ "q4_chats_meeting_before_price": null,
+ "run_command": "python solve.py data -o answers.json",
+ "notes": "Q1: номер заказа — число после необязательного префикса A/А (лат./кир., любой регистр) и дефиса, ведущие нули и пробелы игнорируются. Дубли пары «заказ + № строки» схлопываются до версии с самым поздним «Выгружено»; при равном времени берётся строка ниже в файле."
+}
