@@ -49,6 +49,11 @@ class Catalog:
     prices: pd.DataFrame   # article, date_from, date_to (None = бессрочно), rec_price, min_price
     managers: dict         # norm_key(написание) -> каноническое имя
 
+    @property
+    def manager_names(self):
+        """Канонические имена в порядке справочника."""
+        return list(dict.fromkeys(self.managers.values()))
+
     def current_article(self, article):
         return self.renames.get(article, article)
 
