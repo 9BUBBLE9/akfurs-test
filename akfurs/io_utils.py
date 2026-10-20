@@ -1,7 +1,6 @@
 """Чтение сырых файлов: поиск по маске, кодировка, разделитель."""
 import csv
 import io
-import re
 import sys
 from pathlib import Path
 
@@ -49,11 +48,23 @@ def read_csv_text(path, header_marker):
     return df
 
 
-# A-00075, А-75 (кириллица), a-75, A75, 75 -> 75
-ORDER_RE = re.compile(r"^[AaАа]?\s*-?\s*(\d+)$")
+def require_columns(df, columns, source):
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise ValueError(f"{source}: нет колонок {missing}, есть {list(df.columns)}")
 
 
-def parse_order_number(value):
-    """Номер заказа как число или None, если формат не распознан."""
-    m = ORDER_RE.match(str(value).strip())
-    return int(m.group(1)) if m else None
+def read_excel_table(path, sheet, header_marker):
+    """Лист Excel как таблица; строка заголовка — первая, где есть header_marker.
+
+    Скрытые листы читаются так же, как видимые.
+    """
+    raw = pd.read_excel(path, sheet_name=sheet, header=None)
+    header_rows = [i for i, row in raw.iterrows()
+                   if any(str(v).strip() == header_marker for v in row)]
+    if not header_rows:
+        raise ValueError(f"{path} [{sheet}]: нет строки заголовка с '{header_marker}'")
+    h = header_rows[0]
+    df = raw.iloc[h + 1:].copy()
+    df.columns = [str(c).strip() for c in raw.iloc[h]]
+    return df.dropna(how="all").reset_index(drop=True)

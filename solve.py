@@ -7,7 +7,7 @@ import argparse
 import json
 import sys
 
-from akfurs import crm, q1
+from akfurs import catalog, crm, q1
 
 RUN_COMMAND = "python solve.py data -o answers.json"
 
@@ -15,6 +15,13 @@ NOTES = [
     "Q1: номер заказа — число после необязательного префикса A/А (лат./кир., любой регистр) "
     "и дефиса, ведущие нули и пробелы игнорируются. Дубли пары «заказ + № строки» схлопываются "
     "до версии с самым поздним «Выгружено»; при равном времени берётся строка ниже в файле.",
+    "Нормализация CRM: даты вида NN/NN/YYYY читаются как ДД/ММ (порядок определяется по данным: "
+    "где-то первое число > 12), пятизначные числа — серийные даты Excel. Скидка «N%» считается от "
+    "Цена × Кол-во, скидка числом — рубли на всю строку; цена за единицу после скидки = "
+    "(Цена × Кол-во − скидка) / Кол-во. Старые артикулы всегда переводятся в новые по листу "
+    "«Переименования», независимо от даты перехода (старый код встречается и после неё). "
+    "Статусы сопоставляются по словарю; NEW и «Ждём оплату» — «В работе». "
+    "Незнакомый формат любого поля останавливает расчёт с ошибкой, а не пропускается.",
 ]
 
 # порядок ключей — как в answers_template.json
@@ -38,7 +45,8 @@ def main():
     parser.add_argument("-o", "--out", help="куда записать answers.json (по умолчанию stdout)")
     args = parser.parse_args()
 
-    orders = crm.load_clean(args.data_dir)
+    reference = catalog.load(args.data_dir)
+    orders = crm.load_clean(args.data_dir, reference)
 
     answers = dict.fromkeys(ANSWER_KEYS)
     answers.update(q1.solve(orders))
