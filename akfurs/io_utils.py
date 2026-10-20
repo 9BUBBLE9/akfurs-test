@@ -43,9 +43,13 @@ def read_csv_text(path, header_marker):
         raise ValueError(f"в {path} нет строки заголовка с '{header_marker}'")
     body = "\n".join(lines[header_idx:])
     delimiter = csv.Sniffer().sniff(lines[header_idx], delimiters=";,\t|").delimiter
-    df = pd.read_csv(io.StringIO(body), sep=delimiter, dtype=str, keep_default_na=False)
+    df = pd.read_csv(io.StringIO(body), sep=delimiter, dtype=str, keep_default_na=False,
+                     skip_blank_lines=False)
     df.columns = [c.strip() for c in df.columns]
-    return df
+    df["source_row"] = df.index + header_idx + 2  # номер строки в исходном файле
+    data_cols = df.columns.drop("source_row")
+    is_blank = df[data_cols].apply(lambda col: col.str.strip() == "").all(axis=1)
+    return df[~is_blank].reset_index(drop=True)
 
 
 def require_columns(df, columns, source):

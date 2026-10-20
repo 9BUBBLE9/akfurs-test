@@ -78,7 +78,6 @@ def load_raw(data_dir):
     """Сырые строки CRM + разобранные номер заказа, № строки и время выгрузки."""
     df = read_csv_text(find_file(data_dir, CRM_PATTERN), header_marker=COL_ORDER)
     require_columns(df, REQUIRED, "CRM")
-    df[SOURCE_ROW] = df.index + 2  # номер строки в файле (с учётом заголовка)
 
     errors = _Errors()
     df[ORDER] = errors.apply(df, COL_ORDER, parse_order_number, COL_ORDER)

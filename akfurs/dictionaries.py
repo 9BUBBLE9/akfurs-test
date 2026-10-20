@@ -35,6 +35,17 @@ CURRENCIES = {
     "₽": "RUB",
 }
 
+TYPE_INCOMING = "Поступление"
+TYPE_OUTGOING = "Списание"
+
+OPERATION_TYPES = {
+    "поступление": TYPE_INCOMING,
+    "зачисление": TYPE_INCOMING,
+    "приход": TYPE_INCOMING,
+    "списание": TYPE_OUTGOING,
+    "расход": TYPE_OUTGOING,
+}
+
 SOURCES = {
     "instagram": "Instagram",
     "insta": "Instagram",
