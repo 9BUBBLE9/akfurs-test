@@ -152,6 +152,13 @@ def test_maybe_invite_warns(capsys):
 
 # ---------- запуск ----------
 
+def test_cli_missing_data_folder(tmp_path):
+    r = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "solve.py"), str(tmp_path / "data")],
+                       capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 2
+    assert "не найдена" in r.stderr and "README" in r.stderr and "WinError" not in r.stderr
+
+
 def test_cli_reports_data_error_without_traceback(tmp_path):
     write_catalog(tmp_path / "c.xlsx")
     write_crm(tmp_path / "01_crm.csv",

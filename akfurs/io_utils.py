@@ -23,6 +23,9 @@ def find_file(data_dir, suffixes, matches, what):
 
     Имя файла не важно: новая выгрузка может называться как угодно.
     """
+    if not Path(data_dir).is_dir():
+        raise FileNotFoundError(f"папка с данными '{data_dir}' не найдена — создайте её и положите "
+                                f"туда файлы задания (см. README, раздел «Запуск», шаг «Данные»)")
     candidates = sorted(p for p in Path(data_dir).iterdir()
                         if p.is_file() and p.suffix.lower() in suffixes)
     found = [p for p in candidates if matches(p)]
